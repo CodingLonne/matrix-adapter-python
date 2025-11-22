@@ -36,14 +36,20 @@ class BrokerConnection:
 
         self.websocket = websocket.WebSocketApp(
             self.url,
-            on_open=lambda _: self.on_open(),
-            on_close=lambda _, close_status_code, close_msg: self.on_close(close_status_code, close_msg),
-            on_message=lambda _, msg: self.on_message(msg),
-            on_error=lambda _, msg: self.on_error(msg),
-            header={'Authorization': 'Bearer {token}'.format(token=self.token)},
+            on_open=self.on_open_wrapper,
+            on_close=self.on_close_wrapper,
+            on_message=self.on_message,
+            on_error=self.on_error,
+            header={'Authorization': f'Bearer {self.token}'},
         )
 
         self.websocket.run_forever()
+
+    def on_open_wrapper(self, ws):
+        self.on_open()
+
+    def on_close_wrapper(self, ws, code, reason):
+        self.on_close(code, reason)
 
     def on_open(self):
         """
@@ -64,7 +70,7 @@ class BrokerConnection:
                      .format(code=close_status_code, reason=close_msg))
         self.adapter_core.on_close()
 
-    def on_message(self, message):
+    def on_message(self, ws, message):
         """
         Callback handler for when a message is received from the Axini Modeling Platform.
 
@@ -74,7 +80,7 @@ class BrokerConnection:
         logging.debug('Received a message: {msg}'.format(msg=message))
         self.adapter_core.handle_message(message)
 
-    def on_error(self, err):
+    def on_error(self, ws, err):
         """
         Callback handler for when an error occurs with the connection to the Axini Modeling Platform
 
@@ -82,7 +88,7 @@ class BrokerConnection:
             err (str): Error message
         """
         logging.error('Got a connection error: {error}'.format(error=err))
-        self.adapter_core.send_error(err)
+        self.adapter_core.send_error(str(err))
 
         logging.debug('Closing the connection...')
         self.websocket.close()

@@ -1,8 +1,8 @@
 from enum import Enum
 from typing import List
 
-import generic.api.configuration_pb2 as configuration_pb2
-from generic.api.type import Type
+from . import configuration_pb2
+from .type import Type
 
 
 class ConfigurationItem:

@@ -11,8 +11,8 @@ from google.protobuf import symbol_database as _symbol_database
 _sym_db = _symbol_database.Default()
 
 
-from generic.api import configuration_pb2 as configuration__pb2
-from generic.api import label_pb2 as label__pb2
+from . import configuration_pb2 as configuration__pb2
+from . import label_pb2 as label__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12\x61nnouncement.proto\x12\x11PluginAdapter.Api\x1a\x13\x63onfiguration.proto\x1a\x0blabel.proto\"\x7f\n\x0c\x41nnouncement\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x37\n\rconfiguration\x18\x02 \x01(\x0b\x32 .PluginAdapter.Api.Configuration\x12(\n\x06labels\x18\x03 \x03(\x0b\x32\x18.PluginAdapter.Api.Labelb\x06proto3')

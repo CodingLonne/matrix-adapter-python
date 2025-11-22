@@ -11,9 +11,9 @@ from google.protobuf import symbol_database as _symbol_database
 _sym_db = _symbol_database.Default()
 
 
-from generic.api import label_pb2 as label__pb2
-from generic.api import announcement_pb2 as announcement__pb2
-from generic.api import configuration_pb2 as configuration__pb2
+from . import label_pb2 as label__pb2
+from . import announcement_pb2 as announcement__pb2
+from . import configuration_pb2 as configuration__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rmessage.proto\x12\x11PluginAdapter.Api\x1a\x0blabel.proto\x1a\x12\x61nnouncement.proto\x1a\x13\x63onfiguration.proto\"\xf5\x02\n\x07Message\x12\x31\n\x05\x65rror\x18\x01 \x01(\x0b\x32 .PluginAdapter.Api.Message.ErrorH\x00\x12\x37\n\x0c\x61nnouncement\x18\x02 \x01(\x0b\x32\x1f.PluginAdapter.Api.AnnouncementH\x00\x12\x39\n\rconfiguration\x18\x03 \x01(\x0b\x32 .PluginAdapter.Api.ConfigurationH\x00\x12)\n\x05label\x18\x04 \x01(\x0b\x32\x18.PluginAdapter.Api.LabelH\x00\x12\x31\n\x05reset\x18\x05 \x01(\x0b\x32 .PluginAdapter.Api.Message.ResetH\x00\x12\x31\n\x05ready\x18\x06 \x01(\x0b\x32 .PluginAdapter.Api.Message.ReadyH\x00\x1a\x07\n\x05Reset\x1a\x07\n\x05Ready\x1a\x18\n\x05\x45rror\x12\x0f\n\x07message\x18\x01 \x01(\tB\x06\n\x04typeb\x06proto3')

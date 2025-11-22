@@ -1,5 +1,6 @@
 import logging
 import time
+import requests
 
 from datetime import datetime
 
@@ -8,85 +9,137 @@ from generic.api.configuration import ConfigurationItem, Configuration
 from generic.api.label import Label, Sort
 from generic.api.parameter import Type, Parameter
 from generic.handler import Handler as AbstractHandler
-from smartdoor.smartdoor_connection import SmartDoorConnection
 
-def _response(name, channel='door', parameters=None):
-    """ Helper method to create a response Label. """
-    return Label(Sort.RESPONSE, name, channel, parameters=parameters)
+def _response(name, channel='matrix', parameters=None):
+    return Label(
+        sort=Sort.RESPONSE,
+        name=name,
+        channel=channel,
+        parameters=parameters,
+        timestamp=None
+    )
 
-def _stimulus(name, channel='door', parameters=None):
-    """ Helper method to create a stimulus Label. """
-    return Label(Sort.STIMULUS, name, channel, parameters=parameters)
 
-class Handler(AbstractHandler):
-    """
-    This class handles the interaction between AMP and the SmartDoor SUT.
-    """
+def _stimulus(name, channel='matrix', parameters=None):
+    return Label(
+        sort=Sort.STIMULUS,
+        name=name,
+        channel=channel,
+        parameters=parameters,
+        timestamp=None
+    )
 
-    def __init__(self):
-        super().__init__()
-        self.sut = None
-
-    def send_message_to_amp(self, raw_message: str):
-        """
-        Send a message back to AMP. The message from the SUT needs to be converted to a Label.
-
-        Args:
-            raw_message (str): The message to send to AMP.
-        """
-        logging.debug('response received: {label}'.format(label=raw_message))
-
-        if raw_message == 'RESET_PERFORMED':
-            # After 'RESET_PERFORMED', the SUT is ready for a new test case.
-            self.adapter_core.send_ready()
-        else:
-            label = self._message2label(raw_message)
-            self.adapter_core.send_response(label)
+class MatrixHandler(AbstractHandler):
+    BASE_URL = "http://localhost:8008"
+    begin_wait_time = 5
+    in_between_wait_time = 0.5
 
     def start(self):
-        """
-        Start a test.
-        """
-        end_point = self.configuration.items[0].value
-        self.sut = SmartDoorConnection(self, end_point)
-        self.sut.connect()
+        #login
+        succes1, login_resp = self._login_user("@alice:localhost", "123")
+        if succes1:
+            print("Alice has been logged in")
+        else:
+            print("error while logging Alice in.")
+            print(login_resp.json())
+            exit()
+        self.access_token = login_resp.json()["access_token"]
+        self.access_tokens = [self.access_token]
+        #get all the rooms to delete
+        succes2, room_list_resp = self._get_joined_rooms(self.access_token)
+        for room_id in room_list_resp.json()["joined_rooms"]:
+            print("deleting", room_id)
+            succes3, leave_room_resp = self._leave_room(self.access_token, room_id)
+            succes4, forget_room_resp = self._forget_room(self.access_token, room_id)
+        #create room
+        succes5, room_resp5 = self._create_room(self.access_token, "first room")
+        if succes5:
+            print("Test room made")
+        else:
+            print("error while making room")
+            print(room_resp5.json())
+            exit()
+        self.room_ids = [room_resp5.json()["room_id"]]
 
-    def reset(self):
-        """
-        Prepare the SUT for the next test case.
-        """
-        logging.info('Resetting the SUT for a new test case')
-        self.sut.send('RESET')
-
+        self.adapter_core.send_ready()
+    
     def stop(self):
-        """
-        Stop the SUT from testing.
-        """
-        logging.info('Stopping the plugin handler')
-        self.sut.stop()
-        self.sut = None
-
-        logging.debug('Finished stopping the plugin handler')
-
+        pass
+    
+    def reset(self):
+        self.adapter_core.send_ready()
+    
     def stimulate(self, pb_label: label_pb2.Label):
-        """
-        Processes a stimulus of a given label at the SUT.
-
-        Args:
-            pb_label (label_pb2.Label): stimulus that the Axini Modeling Platform has sent
-        """
-
+        print("simulate")
         label = Label.decode(pb_label)
-        sut_msg = self._label2message(label)
+        print(1)
+        print(label.name, [p.value for p in label.parameters])
+        print(2)
 
         # send confirmation of stimulus back to AMP
+        print("sending confirmation")
         pb_label.timestamp = time.time_ns()
-        pb_label.physical_label = bytes(sut_msg, 'UTF-8')
+        pb_label.physical_label = bytes(label.name, 'UTF-8')
         self.adapter_core.send_stimulus_confirmation(pb_label)
 
-        # leading spaces are needed to justify the stimuli and responses
-        logging.info('      Injecting stimulus @SUT: ?{name}'.format(name=label.name))
-        self.sut.send(sut_msg)
+        time.sleep(self.in_between_wait_time)
+        print("decoding command")
+        command_name = label.name.upper()
+        if command_name == "INIT":
+            self._handle_stimulus_init()
+        elif command_name == "SEND_MESSAGE":
+            room_id = label.parameters[0].value
+            body = label.parameters[1].value
+            txn_id = label.parameters[2].value
+            self._handle_stimulus_send_msg(room_id, body, txn_id)
+        elif command_name == "REPLY_MESSAGE":
+            room_id = label.parameters[0].value
+            body = label.parameters[1].value
+            parent_event = label.parameters[2].value
+            txn_id = label.parameters[3].value
+            self._handle_stimulus_reply_msg(room_id, parent_event, body, txn_id)
+        else:
+            print("unknown label")
+    
+    def _handle_stimulus_init(self):
+        print("_handle_stimulus_init")
+        for room_id in self.room_ids:
+            sut_msg = _response('created_room', 'matrix', parameters=[Parameter('room_id', Type.STRING, value=room_id)])
+            self.adapter_core.send_response(sut_msg)
+        print("_handle_stimulus_init2")
+        sut_msg2 = Label(
+                sort=Sort.RESPONSE,
+                name='rooms_ready',
+                channel='matrix',
+                physical_label=bytes("created room", 'UTF-8'),
+                timestamp=None,
+                parameters=[])
+        self.adapter_core.send_response(sut_msg2)
+        print("_handle_stimulus_init done")
+
+    def _handle_stimulus_send_msg(self, room_id, body, txnID):
+        print("_handle_stimulus_send_msg")
+        succes, resp = self._send_message_in_room(self.access_token, room_id, body, txnID)
+        if resp.status_code == 200:
+            sut_msg = _response("success", 'matrix', parameters=[Parameter('event_id', Type.STRING, value=resp.json()["event_id"])])
+        elif resp.status_code == 400:
+            sut_msg = _response("400", 'matrix', parameters=[])
+        else:
+            sut_msg = _response(str(resp.status_code), 'matrix', parameters=[])
+            print(resp.json())
+        self.adapter_core.send_response(sut_msg)
+        
+    def _handle_stimulus_reply_msg(self, room_id, event_id, body, txnID):
+        print("_handle_stimulus_reply_msg")
+        succes, resp = self._reply_message_in_room(self.access_token, room_id, event_id, body, txnID)
+        if resp.status_code == 200:#access_token, room_id, msg, event_id, tnxID
+            sut_msg = _response("success", 'matrix', parameters=[Parameter('event_id', Type.STRING, value=resp.json()["event_id"])])
+        elif resp.status_code == 400:
+            sut_msg = _response("400", 'matrix', parameters=[])
+        else:
+            sut_msg = _response(str(resp.status_code), 'matrix', parameters=[])
+            print(resp.json())
+        self.adapter_core.send_response(sut_msg)
 
     def supported_labels(self):
         """
@@ -96,21 +149,41 @@ class Handler(AbstractHandler):
              [Label]: List of all supported labels of this adapter
         """
         return [
-            _stimulus('open'),
-            _response('opened'),
-            _stimulus('close'),
-            _response('closed'),
-            _stimulus('lock', parameters=[Parameter('passcode', Type.INTEGER)]),
-            _response('locked'),
-            _stimulus('unlock', parameters=[Parameter('passcode', Type.INTEGER)]),
-            _response('unlocked'),
-            _stimulus('reset'),
-            _response('invalid_command'),
-            _response('invalid_passcode'),
-            _response('incorrect_passcode'),
-            _response('shut_off'),
-        ]
+            _stimulus('init', parameters=[]),
 
+            _stimulus('send_msg', parameters=[Parameter('room_id', Type.STRING,), 
+                                              Parameter('body', Type.STRING,), 
+                                              Parameter('txn_id', Type.INTEGER)]),
+
+            _stimulus('reply_msg', parameters=[Parameter('room_id', Type.STRING,), 
+                                               Parameter('body', Type.STRING,), 
+                                               Parameter('parent_event', Type.STRING,), 
+                                               Parameter('txn_id', Type.INTEGER)]),
+
+            _stimulus('redact_msg', parameters=[Parameter('room_id', Type.STRING,), 
+                                               Parameter('event_id', Type.STRING,), 
+                                               Parameter('txn_id', Type.INTEGER)]),
+
+            _response('created_room', parameters=[Parameter('room_id', Type.STRING)]),
+
+            _response('rooms_ready', parameters=[]),
+
+            _response('success', parameters=[Parameter('event_id', Type.STRING,)]),
+            
+            _response('400', parameters=[]),
+
+            _response('403', parameters=[]),
+        ]
+    
+    def get_configuration(self) -> Configuration:
+        """
+        The default configuration of this adapter.
+
+        Returns:
+            Configuration: the default configuration required by this adapter.
+        """
+        return Configuration([])
+    
     def default_configuration(self) -> Configuration:
         """
         The default configuration of this adapter.
@@ -118,48 +191,192 @@ class Handler(AbstractHandler):
         Returns:
             Configuration: the default configuration required by this adapter.
         """
-        return Configuration([ConfigurationItem(\
-            name='endpoint',
-            tipe=Type.STRING,
-            description='Base websocket URL of the SmartDoor API',
-            value='ws://localhost:3001'),
-        ])
+        return Configuration([])
 
-    def _label2message(self, label: Label):
-        """
-        Converts a Protobuf label to a SUT message.
+    def _login_user(self, username, password):
+        login_resp = requests.post(
+                f"{self.BASE_URL}/_matrix/client/v3/login",
+                json={
+                    "type": "m.login.password",
+                    "identifier": {
+                        "type": "m.id.user",
+                        "user": username
+                    },
+                    "password": password
+                }
+            )
+        while login_resp.status_code==429:
+            #trying again until success
+            print(login_resp.json())
+            print(f"login request timed out. trying again after wait of {login_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(login_resp.json()['retry_after_ms']*0.001+1)
+            login_resp = requests.post(
+                f"{self.BASE_URL}/_matrix/client/v3/login",
+                json={
+                    "type": "m.login.password",
+                    "identifier": {
+                        "type": "m.id.user",
+                        "user": username
+                    },
+                    "password": password
+                }
+            )
 
-        Args:
-            label (Label)
-        Returns:
-            str: The message to be sent to the SUT.
-        """
+        succes = login_resp.status_code == 200
+        return succes, login_resp
+    
+    def _create_room(self, access_token, name):
+        headers = {"Authorization": f"Bearer {access_token}"}
+        room_resp = requests.post(
+                f"{self.BASE_URL}/_matrix/client/r0/createRoom",
+                headers=headers,
+                json={
+                    "name": name,
+                    "preset": "public_chat",
+                    #"room_alias_name": alias,
+                    "topic": "All about happy hour"
+                }
+            )
+        while room_resp.status_code==429:
+            print(f"create room request timed out. trying again after wait of {room_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(room_resp.json()['retry_after_ms']*0.001+1)
+            room_resp = requests.post(
+                f"{self.BASE_URL}/_matrix/client/r0/createRoom",
+                headers=headers,
+                json={
+                    "name": name,
+                    "preset": "public_chat",
+                    #"room_alias_name": alias,
+                    "topic": "All about happy hour"
+                }
+            )
 
-        sut_msg = None
-        command_name = label.name.upper()
-        if label.name in ['lock', 'unlock']:
-            sut_msg = '{msg}:{passcode}'.format(msg=command_name, passcode=label.parameters[0].value)
-        else:
-            sut_msg = '{msg}'.format(msg=command_name)
+        succes = room_resp.status_code == 200
+        return succes, room_resp
+    
+    def _leave_room(self, access_token, room_id):
+        headers = {"Authorization": f"Bearer {access_token}"}
+        leave_resp = requests.post(
+            f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/leave",
+            headers=headers,
+            json={
+                "reason": "Saying farewell - thanks for the support!"
+            }
+        )
+        while leave_resp.status_code==429:
+            print(f"create room request timed out. trying again after wait of {leave_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(leave_resp.json()['retry_after_ms']*0.001+1)
+            leave_resp = requests.post(
+                f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/leave",
+                headers=headers,
+                json={
+                    "reason": "Saying farewell - thanks for the support!"
+                }
+            )
 
-        return sut_msg
+        return leave_resp.status_code == 200, leave_resp
+    
+    def _forget_room(self, access_token, room_id):
+        # probably good practice, but does not seem to actually forget room.
+        # According to specification:
+        '''
+        This API stops a user remembering about a particular room.
+        In general, history is a first class citizen in Matrix. After this API is called, however, a user will no longer be able to retrieve history for this room. If all users on a homeserver forget a room, the room is eligible for deletion from that homeserver.
+        If the user is currently joined to the room, they must leave the room before calling this API.
+        '''
+        headers = {"Authorization": f"Bearer {access_token}"}
+        forget_resp = requests.post(
+            f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/forget",
+            headers=headers,
+            json={}
+        )
+        while forget_resp.status_code==429:
+            print(f"create room request timed out. trying again after wait of {forget_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(forget_resp.json()['retry_after_ms']*0.001+1)
+            forget_resp = requests.post(
+                f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/forget",
+                headers=headers,
+                json={}
+            )
 
-    def _message2label(self, message: str):
-        """
-        Converts a SUT message to a Protobuf Label.
+        return forget_resp.status_code == 200, forget_resp
+    
+    def _get_joined_rooms(self, access_token):
+        headers = {"Authorization": f"Bearer {access_token}"}
+        room_resp = requests.get(
+            f"{self.BASE_URL}/_matrix/client/v3/joined_rooms",
+            headers=headers,
+            json={}
+        )
+        while room_resp.status_code==429:
+            print(f"create room request timed out. trying again after wait of {room_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(room_resp.json()['retry_after_ms']*0.001+1)
+            room_resp = requests.get(
+                f"{self.BASE_URL}/_matrix/client/v3/joined_rooms",
+                headers=headers,
+                json={}
+            )
 
-        Args:
-            message (str)
-        Returns:
-            Label: The converted message as a Label.
-        """
+        succes = room_resp.status_code == 200
+        return succes, room_resp
 
-        label_name = message.lower()
-        label = Label(
-            sort=Sort.RESPONSE,
-            name=label_name,
-            channel='door',
-            physical_label=bytes(message, 'UTF-8'),
-            timestamp=datetime.now())
+    def _send_message_in_room(self, access_token, room_id, msg, tnxID, eventType = "m.room.message", msgType = "m.text"):
+        # 3 Send a message
+        headers = {"Authorization": f"Bearer {access_token}"}
+        message_resp = requests.put(
+            f"{self.BASE_URL}/_matrix/client/r0/rooms/{room_id}/send/{eventType}/{tnxID}",
+            headers=headers,
+            json={
+                "msgtype": msgType,
+                "body": msg
+            }
+        )
+        while message_resp.status_code==429:
+            print(f"send message request timed out. trying again after wait of {message_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(message_resp.json()['retry_after_ms']*0.001+1)
+            message_resp = requests.put(
+                f"{self.BASE_URL}/_matrix/client/r0/rooms/{room_id}/send/{eventType}/{tnxID}",
+                headers=headers,
+                json={
+                    "msgtype": msgType,
+                    "body": msg
+                }
+            )
 
-        return label
+        return message_resp.status_code == 200, message_resp
+    
+    def _reply_message_in_room(self, access_token, room_id, msg, event_id, tnxID, eventType = "m.room.message", msgType = "m.text"):
+        # 3 Reply to a message
+        headers = {"Authorization": f"Bearer {access_token}"}
+        reply_resp = requests.put(
+            f"{self.BASE_URL}/_matrix/client/r0/rooms/{room_id}/send/{eventType}/{tnxID}",
+            headers=headers,
+            json={
+                "msgtype": msgType,
+                "body": msg,
+                "m.relates_to": {
+                    "m.in_reply_to": {
+                        "event_id": event_id
+                    }
+                }
+            }
+        )
+        while reply_resp.status_code==429:
+            print(f"reply message request timed out. trying again after wait of {reply_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(reply_resp.json()['retry_after_ms']*0.001+1)
+            reply_resp = requests.put(
+                f"{self.BASE_URL}/_matrix/client/r0/rooms/{room_id}/send/{eventType}/{tnxID}",
+                headers=headers,
+                json={
+                    "msgtype": msgType,
+                    "body": msg,
+                    "m.relates_to": {
+                        "m.in_reply_to": {
+                            "event_id": event_id
+                        }
+                    }
+                }
+            )
+        print(reply_resp.json())
+        return reply_resp.status_code == 200, reply_resp
+    

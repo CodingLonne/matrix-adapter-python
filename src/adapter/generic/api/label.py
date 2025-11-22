@@ -2,8 +2,9 @@ from datetime import datetime
 from enum import Enum
 from typing import List
 
-from generic.api import label_pb2
-from generic.api.parameter import Parameter
+from . import label_pb2
+from .parameter import Parameter
+
 
 
 class Sort(Enum):

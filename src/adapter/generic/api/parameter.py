@@ -2,9 +2,10 @@ from datetime import datetime, date
 from types import SimpleNamespace
 from typing import Any
 
-from generic.api import label_pb2
-from generic.api.type import Type
-from generic.util.namespace_util import to_obj
+from . import label_pb2
+from .type import Type
+from ..util.namespace_util import to_obj
+
 
 
 def _determine_type_from_value(value) -> Type:
