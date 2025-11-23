@@ -72,9 +72,7 @@ class MatrixHandler(AbstractHandler):
     def stimulate(self, pb_label: label_pb2.Label):
         print("simulate")
         label = Label.decode(pb_label)
-        print(1)
         print(label.name, [p.value for p in label.parameters])
-        print(2)
 
         # send confirmation of stimulus back to AMP
         print("sending confirmation")
@@ -100,17 +98,16 @@ class MatrixHandler(AbstractHandler):
             self._handle_stimulus_reply_msg(room_id, parent_event, body, txn_id)
         elif command_name == "REDACT_MESSAGE":
             room_id = label.parameters[0].value
-            body = label.parameters[1].value
-            parent_event = label.parameters[2].value
-            txn_id = label.parameters[3].value
-            self._handle_stimulus_redact_msg(room_id, parent_event, body, txn_id)
+            event_id = label.parameters[1].value
+            txn_id = label.parameters[2].value
+            self._handle_stimulus_redact_msg(room_id, event_id, txn_id)
 
         else:
             print("unknown label")
 
-    def _handle_stimulus_redact_msg(self, room_id, body, txnID):
-        sut_msg = None
-        succes, resp = self._redact_message_in_room(self.access_token, room_id, body, txnID)
+    def _handle_stimulus_redact_msg(self, room_id, event_id, txnID):
+        print('_handle_stimulus_redact_msg')
+        succes, resp = self._redact_message_in_room(self.access_token, room_id, event_id, txnID)
         if resp.status_code == 200:
             sut_msg = _response("success", 'matrix', parameters=[Parameter('event_id', Type.STRING, value=resp.json()["event_id"])])
         elif resp.status_code == 400:
@@ -122,6 +119,7 @@ class MatrixHandler(AbstractHandler):
 
     def _redact_message_in_room(self, access_token, room_id, event_id, txnID):
         #PUT /_matrix/client/v3/rooms/{roomId}/redact/{eventId}/{txnId}
+        print('_redact_message_in_room')
         headers = {"Authorization": f"Bearer {access_token}"}
         message_resp = requests.put(
             f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/redact/{event_id}/{txnID}",
