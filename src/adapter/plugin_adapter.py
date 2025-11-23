@@ -4,7 +4,7 @@ import socket
 
 from generic.adapter_core import AdapterCore
 from generic.broker_connection import BrokerConnection
-from smartdoor.handler import MatrixHandler
+from matrix.handler import MatrixHandler
 
 ADAPTER_NAME = 'matrix'
 

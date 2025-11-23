@@ -35,6 +35,7 @@ class MatrixHandler(AbstractHandler):
     in_between_wait_time = 0.5
 
     def start(self):
+        self.test_case_num = 1
         #login
         succes1, login_resp = self._login_user("@alice:localhost", "123")
         if succes1:
@@ -52,7 +53,7 @@ class MatrixHandler(AbstractHandler):
             succes3, leave_room_resp = self._leave_room(self.access_token, room_id)
             succes4, forget_room_resp = self._forget_room(self.access_token, room_id)
         #create room
-        succes5, room_resp5 = self._create_room(self.access_token, "first room")
+        succes5, room_resp5 = self._create_room(self.access_token, "first room{self.test_case_num}")
         if succes5:
             print("Test room made")
         else:
@@ -67,6 +68,17 @@ class MatrixHandler(AbstractHandler):
         pass
     
     def reset(self):
+        self.test_case_num += 1
+        #create room
+        succes5, room_resp5 = self._create_room(self.access_token, "first room{self.test_case_num}")
+        if succes5:
+            print("Test room made")
+        else:
+            print("error while making room")
+            print(room_resp5.json())
+            exit()
+        self.room_ids = [room_resp5.json()["room_id"]]
+
         self.adapter_core.send_ready()
     
     def stimulate(self, pb_label: label_pb2.Label):
@@ -96,46 +108,19 @@ class MatrixHandler(AbstractHandler):
             parent_event = label.parameters[2].value
             txn_id = label.parameters[3].value
             self._handle_stimulus_reply_msg(room_id, parent_event, body, txn_id)
+        elif command_name == "THREAD_MESSAGE":
+            room_id = label.parameters[0].value
+            body = label.parameters[1].value
+            parent_event = label.parameters[2].value
+            txn_id = label.parameters[3].value
+            self._handle_stimulus_thread_msg(room_id, parent_event, body, txn_id)
         elif command_name == "REDACT_MESSAGE":
             room_id = label.parameters[0].value
             event_id = label.parameters[1].value
             txn_id = label.parameters[2].value
             self._handle_stimulus_redact_msg(room_id, event_id, txn_id)
-
         else:
             print("unknown label")
-
-    def _handle_stimulus_redact_msg(self, room_id, event_id, txnID):
-        print('_handle_stimulus_redact_msg')
-        succes, resp = self._redact_message_in_room(self.access_token, room_id, event_id, txnID)
-        if resp.status_code == 200:
-            sut_msg = _response("success", 'matrix', parameters=[Parameter('event_id', Type.STRING, value=resp.json()["event_id"])])
-        elif resp.status_code == 400:
-            sut_msg = _response("400", 'matrix', parameters=[])
-        else:
-            sut_msg = _response(str(resp.status_code), 'matrix', parameters=[])
-            print(resp.json())
-        self.adapter_core.send_response(sut_msg)
-
-    def _redact_message_in_room(self, access_token, room_id, event_id, txnID):
-        #PUT /_matrix/client/v3/rooms/{roomId}/redact/{eventId}/{txnId}
-        print('_redact_message_in_room')
-        headers = {"Authorization": f"Bearer {access_token}"}
-        message_resp = requests.put(
-            f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/redact/{event_id}/{txnID}",
-            headers=headers,
-            json={}
-        )
-        while message_resp.status_code==429:
-            print(f"send message request timed out. trying again after wait of {message_resp.json()['retry_after_ms']*0.001+1}")
-            time.sleep(message_resp.json()['retry_after_ms']*0.001+1)
-            message_resp = requests.put(
-                f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/redact/{event_id}/{txnID}",
-                headers=headers,
-                json={}
-            )
-
-        return message_resp.status_code == 200, message_resp
     
     def _handle_stimulus_init(self):
         print("_handle_stimulus_init")
@@ -177,6 +162,32 @@ class MatrixHandler(AbstractHandler):
             print(resp.json())
         self.adapter_core.send_response(sut_msg)
 
+    def _handle_stimulus_thread_msg(self, room_id, event_id, body, txnID):
+        print("_handle_stimulus_thread_msg")
+        succes, resp = self._thread_message_in_room(self.access_token, room_id, event_id, body, txnID)
+        print(resp.json())
+        if resp.status_code == 200:#access_token, room_id, msg, event_id, tnxID
+            sut_msg = _response("success", 'matrix', parameters=[Parameter('event_id', Type.STRING, value=resp.json()["event_id"])])
+        elif resp.status_code == 400:
+            sut_msg = _response("400", 'matrix', parameters=[])
+            print(resp.json())
+        else:
+            sut_msg = _response(str(resp.status_code), 'matrix', parameters=[])
+            print(resp.json())
+        self.adapter_core.send_response(sut_msg)
+
+    def _handle_stimulus_redact_msg(self, room_id, event_id, txnID):
+        print('_handle_stimulus_redact_msg')
+        succes, resp = self._redact_message_in_room(self.access_token, room_id, event_id, txnID)
+        if resp.status_code == 200:
+            sut_msg = _response("success", 'matrix', parameters=[Parameter('event_id', Type.STRING, value=resp.json()["event_id"])])
+        elif resp.status_code == 400:
+            sut_msg = _response("400", 'matrix', parameters=[])
+        else:
+            sut_msg = _response(str(resp.status_code), 'matrix', parameters=[])
+            print(resp.json())
+        self.adapter_core.send_response(sut_msg)
+
     def supported_labels(self):
         """
         The labels supported by the adapter.
@@ -187,16 +198,21 @@ class MatrixHandler(AbstractHandler):
         return [
             _stimulus('init', parameters=[]),
 
-            _stimulus('send_msg', parameters=[Parameter('room_id', Type.STRING,), 
+            _stimulus('send_message', parameters=[Parameter('room_id', Type.STRING,), 
                                               Parameter('body', Type.STRING,), 
                                               Parameter('txn_id', Type.INTEGER)]),
 
-            _stimulus('reply_msg', parameters=[Parameter('room_id', Type.STRING,), 
+            _stimulus('reply_message', parameters=[Parameter('room_id', Type.STRING,), 
                                                Parameter('body', Type.STRING,), 
                                                Parameter('parent_event', Type.STRING,), 
                                                Parameter('txn_id', Type.INTEGER)]),
 
-            _stimulus('redact_msg', parameters=[Parameter('room_id', Type.STRING,), 
+            _stimulus('thread_message', parameters=[Parameter('room_id', Type.STRING,), 
+                                               Parameter('body', Type.STRING,), 
+                                               Parameter('parent_event', Type.STRING,), 
+                                               Parameter('txn_id', Type.INTEGER)]),
+
+            _stimulus('redact_message', parameters=[Parameter('room_id', Type.STRING,), 
                                                Parameter('event_id', Type.STRING,), 
                                                Parameter('txn_id', Type.INTEGER)]),
 
@@ -415,4 +431,56 @@ class MatrixHandler(AbstractHandler):
             )
         print(reply_resp.json())
         return reply_resp.status_code == 200, reply_resp
+    
+    def _thread_message_in_room(self, access_token, room_id, msg, event_id, tnxID, eventType = "m.room.message", msgType = "m.text"):
+        # 3 Send a message
+        headers = {"Authorization": f"Bearer {access_token}"}
+        thread_resp = requests.put(
+            f"{self.BASE_URL}/_matrix/client/r0/rooms/{room_id}/send/{eventType}/{tnxID}",
+            headers=headers,
+            json={
+                "msgtype": msgType,
+                "body": msg,
+                "m.relates_to": {
+                    "rel_type": "m.thread",
+                    "event_id": event_id
+                }
+            }
+        )
+        while thread_resp.status_code==429:
+            print(f"reply message request timed out. trying again after wait of {thread_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(thread_resp.json()['retry_after_ms']*0.001+1)
+            thread_resp = requests.put(
+                f"{self.BASE_URL}/_matrix/client/r0/rooms/{room_id}/send/{eventType}/{tnxID}",
+                headers=headers,
+                json={
+                    "msgtype": msgType,
+                    "body": msg,
+                    "m.relates_to": {
+                        "rel_type": "m.thread",
+                        "event_id": event_id
+                    }
+                }
+            )
+        return thread_resp.status_code == 200, thread_resp
+    
+    def _redact_message_in_room(self, access_token, room_id, event_id, txnID):
+        #PUT /_matrix/client/v3/rooms/{roomId}/redact/{eventId}/{txnId}
+        print('_redact_message_in_room')
+        headers = {"Authorization": f"Bearer {access_token}"}
+        message_resp = requests.put(
+            f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/redact/{event_id}/{txnID}",
+            headers=headers,
+            json={}
+        )
+        while message_resp.status_code==429:
+            print(f"send message request timed out. trying again after wait of {message_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(message_resp.json()['retry_after_ms']*0.001+1)
+            message_resp = requests.put(
+                f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/redact/{event_id}/{txnID}",
+                headers=headers,
+                json={}
+            )
+
+        return message_resp.status_code == 200, message_resp
     
