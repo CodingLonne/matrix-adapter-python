@@ -98,8 +98,46 @@ class MatrixHandler(AbstractHandler):
             parent_event = label.parameters[2].value
             txn_id = label.parameters[3].value
             self._handle_stimulus_reply_msg(room_id, parent_event, body, txn_id)
+        elif command_name == "REDACT_MESSAGE":
+            room_id = label.parameters[0].value
+            body = label.parameters[1].value
+            parent_event = label.parameters[2].value
+            txn_id = label.parameters[3].value
+            self._handle_stimulus_redact_msg(room_id, parent_event, body, txn_id)
+
         else:
             print("unknown label")
+
+    def _handle_stimulus_redact_msg(self, room_id, body, txnID):
+        sut_msg = None
+        succes, resp = self._redact_message_in_room(self.access_token, room_id, body, txnID)
+        if resp.status_code == 200:
+            sut_msg = _response("success", 'matrix', parameters=[Parameter('event_id', Type.STRING, value=resp.json()["event_id"])])
+        elif resp.status_code == 400:
+            sut_msg = _response("400", 'matrix', parameters=[])
+        else:
+            sut_msg = _response(str(resp.status_code), 'matrix', parameters=[])
+            print(resp.json())
+        self.adapter_core.send_response(sut_msg)
+
+    def _redact_message_in_room(self, access_token, room_id, event_id, txnID):
+        #PUT /_matrix/client/v3/rooms/{roomId}/redact/{eventId}/{txnId}
+        headers = {"Authorization": f"Bearer {access_token}"}
+        message_resp = requests.put(
+            f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/redact/{event_id}/{txnID}",
+            headers=headers,
+            json={}
+        )
+        while message_resp.status_code==429:
+            print(f"send message request timed out. trying again after wait of {message_resp.json()['retry_after_ms']*0.001+1}")
+            time.sleep(message_resp.json()['retry_after_ms']*0.001+1)
+            message_resp = requests.put(
+                f"{self.BASE_URL}/_matrix/client/v3/rooms/{room_id}/redact/{event_id}/{txnID}",
+                headers=headers,
+                json={}
+            )
+
+        return message_resp.status_code == 200, message_resp
     
     def _handle_stimulus_init(self):
         print("_handle_stimulus_init")
